@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models/theme_model.dart';
+import '../../data/models/virtual_album_rules.dart';
 import '../../data/repositories/photo_repository.dart';
 import '../../data/repositories/theme_repository.dart';
 
@@ -68,6 +69,21 @@ class HomeController extends ChangeNotifier {
       _subAlbumCounts = {};
 
       for (final theme in _allThemes) {
+        if (theme.isVirtual) {
+          // Virtual albums count and cover from their live rule query —
+          // photo_categories has no rows for them.
+          final rules = VirtualAlbumRules.decode(theme.virtualRules);
+          final filter = rules.toPhotoFilter();
+          _photoCounts[theme.id!] = await _photoRepository.countPhotos(filter);
+          _subAlbumCounts[theme.id!] = 0;
+          final latest =
+              await _photoRepository.searchPhotos(filter, limit: 1);
+          _coverPaths[theme.id!] = latest.isEmpty ? null : latest.first.localPath;
+          _coverMediaIds[theme.id!] =
+              latest.isEmpty ? null : latest.first.mediaId;
+          continue;
+        }
+
         final count = await _themeRepository.getPhotoCount(theme.id!);
         _photoCounts[theme.id!] = count;
         _subAlbumCounts[theme.id!] =
@@ -134,6 +150,8 @@ class HomeController extends ChangeNotifier {
     int colorValue = 0xFFF39A82,
     String iconKey = 'album',
     bool isPrivate = false,
+    bool isVirtual = false,
+    String? virtualRules,
   }) async {
     try {
       final created = await _themeRepository.createTheme(
@@ -141,6 +159,8 @@ class HomeController extends ChangeNotifier {
         colorValue: colorValue,
         iconKey: iconKey,
         isPrivate: isPrivate,
+        isVirtual: isVirtual,
+        virtualRules: virtualRules,
       );
       await loadThemes();
       return created;
@@ -153,6 +173,13 @@ class HomeController extends ChangeNotifier {
     }
     notifyListeners();
     return null;
+  }
+
+  Future<bool> updateVirtualAlbumRules(int themeId, String rulesJson) async {
+    final success = await _themeRepository.updateVirtualRules(
+        themeId, rulesJson);
+    if (success) await loadThemes();
+    return success;
   }
 
   Future<void> moveTheme(int draggedId, int targetId) async {

@@ -33,8 +33,25 @@ class _MomentsCaptionPageState extends State<MomentsCaptionPage> {
   String _style = '自然日常';
   bool _generating = false;
   List<MomentsCaption> _captions = const [];
+  bool _personaActive = false;
 
   static const _styles = ['自然日常', '文艺克制', '轻松幽默', '电影旁白'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPersonaState();
+  }
+
+  Future<void> _loadPersonaState() async {
+    try {
+      final persona = await _service.loadPersona();
+      if (!mounted) return;
+      setState(() => _personaActive = persona.enabled && persona.hasContent);
+    } catch (_) {
+      // Status hint only; never block caption generation on it.
+    }
+  }
 
   @override
   void dispose() {
@@ -92,6 +109,41 @@ class _MomentsCaptionPageState extends State<MomentsCaptionPage> {
             ),
           ),
           const SizedBox(height: 18),
+          Row(
+            children: [
+              Icon(
+                _personaActive
+                    ? Icons.face_retouching_natural_rounded
+                    : Icons.face_retouching_off_rounded,
+                size: 16,
+                color: _personaActive
+                    ? scheme.primary
+                    : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _personaActive
+                      ? '已应用你的个人特征，文案会按你的人设生成'
+                      : '可在 AI 设置中配置个人特征，让文案更像你写的',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _personaActive
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+              if (!_personaActive)
+                TextButton(
+                  onPressed: _openSettings,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: const Text('去设置'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
           ClayCard(
             padding: const EdgeInsets.all(16),
             child: Column(

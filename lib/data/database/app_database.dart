@@ -68,6 +68,8 @@ class AppDatabase {
         icon_key TEXT NOT NULL DEFAULT '${AppConstants.defaultCategoryIcon}',
         sort_order INTEGER NOT NULL DEFAULT 0,
         is_private INTEGER NOT NULL DEFAULT 0,
+        is_virtual INTEGER NOT NULL DEFAULT 0,
+        virtual_rules TEXT,
         FOREIGN KEY (parent_id) REFERENCES themes(id) ON DELETE CASCADE,
         UNIQUE(name COLLATE NOCASE)
       )
@@ -225,6 +227,13 @@ class AppDatabase {
         'CREATE INDEX IF NOT EXISTS idx_photos_content_hash '
         'ON photos(content_hash)',
       );
+    }
+    if (oldVersion < 12) {
+      // Virtual (rule-based) albums: is_virtual marks the album, virtual_rules
+      // stores the JSON filter. Existing rows stay ordinary albums.
+      await _addColumnIfMissing(
+          db, 'themes', 'is_virtual', 'INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(db, 'themes', 'virtual_rules', 'TEXT');
     }
   }
 

@@ -11,8 +11,11 @@ import '../../core/security/private_album_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/clay_assets.dart';
 import '../../data/models/photo_model.dart';
+import '../../data/models/tag_model.dart';
 import '../../data/models/theme_model.dart';
+import '../../data/models/virtual_album_rules.dart';
 import '../../data/repositories/photo_repository.dart';
+import '../../data/repositories/tag_repository.dart';
 import '../../data/repositories/theme_repository.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/clay_card.dart';
@@ -26,6 +29,7 @@ import '../photo_viewer/photo_viewer_page.dart';
 import '../private_album/private_album_password_pages.dart';
 import 'album_cover_crop_page.dart';
 import 'theme_detail_controller.dart';
+import 'virtual_album_rules_page.dart';
 
 class ThemeDetailPage extends StatefulWidget {
   final int themeId;
@@ -151,12 +155,19 @@ class _ThemeDetailPageState extends State<ThemeDetailPage> {
                       : [
                           RadialActionMenu(
                             actions: [
-                              if (!isSystem && !theme.isSubAlbum)
+                              if (!isSystem && !theme.isSubAlbum && !theme.isVirtual)
                                 RadialMenuAction(
                                   icon: Icons.create_new_folder_outlined,
                                   label: '新建子相册',
                                   onPressed: () => _showCreateSubAlbumDialog(
                                       context, controller),
+                                ),
+                              if (theme.isVirtual)
+                                RadialMenuAction(
+                                  icon: Icons.tune_rounded,
+                                  label: '编辑收集规则',
+                                  onPressed: () =>
+                                      _editVirtualRules(context, controller),
                                 ),
                               if (controller.photoCount > 0)
                                 RadialMenuAction(
@@ -286,6 +297,9 @@ class _ThemeDetailPageState extends State<ThemeDetailPage> {
 
   Widget _buildFloatingTools(
       BuildContext context, ThemeDetailController controller) {
+    // Virtual albums collect photos by rule; importing into them makes no
+    // sense, so only ordinary albums get the import button.
+    if (controller.theme?.isVirtual == true) return const SizedBox.shrink();
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -300,6 +314,43 @@ class _ThemeDetailPageState extends State<ThemeDetailPage> {
         ),
       ],
     );
+  }
+
+  Future<void> _editVirtualRules(
+      BuildContext context, ThemeDetailController controller) async {
+    final theme = controller.theme;
+    if (theme == null || !theme.isVirtual) return;
+    List<TagModel> tags = const [];
+    try {
+      tags = await TagRepository().getTags();
+    } catch (_) {
+      tags = const [];
+    }
+    if (!context.mounted) return;
+    final rules = await Navigator.of(context).push<VirtualAlbumRules>(
+      MaterialPageRoute(
+        builder: (_) => VirtualAlbumRulesPage(
+          tags: tags,
+          initialRules: VirtualAlbumRules.decode(theme.virtualRules),
+          albumName: theme.name,
+        ),
+      ),
+    );
+    if (rules == null || !context.mounted) return;
+    final success = await ThemeRepository()
+        .updateVirtualRules(theme.id!, rules.encode());
+    if (!context.mounted) return;
+    if (success) {
+      await controller.refresh();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('规则已更新')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('规则保存失败')),
+      );
+    }
   }
 
   Widget _buildDescriptionSection(

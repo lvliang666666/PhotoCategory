@@ -15,11 +15,18 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
   final _baseUrl = TextEditingController();
   final _model = TextEditingController();
   final _apiKey = TextEditingController();
+  final _identity = TextEditingController();
+  final _tone = TextEditingController();
+  final _elements = TextEditingController();
+  final _avoid = TextEditingController();
   bool _loading = true;
   bool _saving = false;
   bool _testing = false;
   bool _hasApiKey = false;
   bool _hideApiKey = true;
+  bool _personaEnabled = false;
+  bool _personaSaving = false;
+  bool _personaDrafting = false;
 
   @override
   void initState() {
@@ -32,6 +39,10 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     _baseUrl.dispose();
     _model.dispose();
     _apiKey.dispose();
+    _identity.dispose();
+    _tone.dispose();
+    _elements.dispose();
+    _avoid.dispose();
     super.dispose();
   }
 
@@ -41,6 +52,12 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
       _baseUrl.text = config.baseUrl;
       _model.text = config.model;
       _hasApiKey = config.hasApiKey;
+      final persona = await _service.loadPersona();
+      _personaEnabled = persona.enabled;
+      _identity.text = persona.identity;
+      _tone.text = persona.tone;
+      _elements.text = persona.elements;
+      _avoid.text = persona.avoid;
     } on AiServiceException catch (error) {
       if (mounted) _message(error.message);
     } finally {
@@ -174,6 +191,73 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
+                ClayCard(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text('个人特征',
+                                style: TextStyle(fontWeight: FontWeight.w700)),
+                          ),
+                          Switch(
+                            value: _personaEnabled,
+                            onChanged: (value) =>
+                                setState(() => _personaEnabled = value),
+                          ),
+                        ],
+                      ),
+                      const Text(
+                        '让文案更像你写的：身份、语气、常用词都会影响生成结果。',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 12),
+                      _personaField(_identity, '身份背景',
+                          '例如：二胎爸爸，程序员，坐标杭州'),
+                      const SizedBox(height: 10),
+                      _personaField(_tone, '语气习惯',
+                          '例如：口语化、偶尔自嘲、不用感叹号'),
+                      const SizedBox(height: 10),
+                      _personaField(_elements, '常用元素',
+                          '例如：喜欢引用一句歌词或书摘'),
+                      const SizedBox(height: 10),
+                      _personaField(_avoid, '避免出现',
+                          '例如：不提工作细节、不写煽情结尾'),
+                      const SizedBox(height: 14),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: _personaSaving ? null : _savePersona,
+                            icon: _personaSaving
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.save_outlined),
+                            label: const Text('保存个人特征'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _personaDrafting ? null : _draftPersona,
+                            icon: _personaDrafting
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.auto_fix_high_rounded),
+                            label: const Text('AI 帮我完善'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
                 const ClayCard(
                   padding: EdgeInsets.all(16),
                   child: Column(
@@ -188,6 +272,9 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                       SizedBox(height: 8),
                       Text(
                           'API Key 使用 Android Keystore 加密，仅保存在当前手机和当前应用的数据空间中。'),
+                      SizedBox(height: 8),
+                      Text(
+                          '个人特征仅保存在本机；启用后会随文案请求发送给 AI 服务。'),
                     ],
                   ),
                 ),
@@ -240,6 +327,86 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     } finally {
       if (mounted) setState(() => _testing = false);
     }
+  }
+
+  Widget _personaField(
+      TextEditingController controller, String label, String hint) {
+    return TextField(
+      controller: controller,
+      minLines: 1,
+      maxLines: 3,
+      maxLength: 200,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        counterText: '',
+      ),
+    );
+  }
+
+  AiPersona _collectPersona() => AiPersona(
+        enabled: _personaEnabled,
+        identity: _identity.text.trim(),
+        tone: _tone.text.trim(),
+        elements: _elements.text.trim(),
+        avoid: _avoid.text.trim(),
+      );
+
+  Future<void> _savePersona() async {
+    setState(() => _personaSaving = true);
+    try {
+      await _service.savePersona(_collectPersona());
+      if (mounted) _message('个人特征已保存');
+    } catch (_) {
+      if (mounted) _message('保存个人特征失败');
+    } finally {
+      if (mounted) setState(() => _personaSaving = false);
+    }
+  }
+
+  Future<void> _draftPersona() async {
+    final existing = [
+      '身份背景：${_identity.text.trim()}',
+      '语气习惯：${_tone.text.trim()}',
+      '常用元素：${_elements.text.trim()}',
+      '避免出现：${_avoid.text.trim()}',
+    ]
+        .where((line) => !line.endsWith('：'))
+        .join('\n');
+    final raw = existing.isEmpty ? '（请在下方补充描述）' : existing;
+    setState(() => _personaDrafting = true);
+    try {
+      final draft = await _service.generatePersonaDraft(raw);
+      if (!mounted) return;
+      _applyPersonaDraft(draft);
+      _message('已生成人设草稿，可修改后保存');
+    } on AiServiceException catch (error) {
+      if (mounted) _message(error.message);
+    } finally {
+      if (mounted) setState(() => _personaDrafting = false);
+    }
+  }
+
+  /// Parses the four-line "标签：内容" draft into the editable fields.
+  void _applyPersonaDraft(String draft) {
+    for (final line in draft.split('\n')) {
+      final normalized = line.trim();
+      final separator = normalized.indexOf('：');
+      if (separator <= 0) continue;
+      final label = normalized.substring(0, separator).trim();
+      final value = normalized.substring(separator + 1).trim();
+      if (value.isEmpty || value == '未提及') continue;
+      if (label.contains('身份')) {
+        _identity.text = value;
+      } else if (label.contains('语气')) {
+        _tone.text = value;
+      } else if (label.contains('常用')) {
+        _elements.text = value;
+      } else if (label.contains('避免')) {
+        _avoid.text = value;
+      }
+    }
+    setState(() => _personaEnabled = true);
   }
 
   Future<void> _deleteApiKey() async {

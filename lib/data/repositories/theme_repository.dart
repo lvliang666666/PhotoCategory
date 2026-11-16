@@ -122,6 +122,8 @@ class ThemeRepository {
     int colorValue = AppConstants.defaultCategoryColor,
     String iconKey = AppConstants.defaultCategoryIcon,
     bool isPrivate = false,
+    bool isVirtual = false,
+    String? virtualRules,
   }) async {
     final db = await _db;
     final normalized = name.trim();
@@ -156,6 +158,8 @@ class ThemeRepository {
       'icon_key': iconKey,
       'sort_order': sortOrder,
       'is_private': isPrivate ? 1 : 0,
+      'is_virtual': isVirtual ? 1 : 0,
+      'virtual_rules': isVirtual ? virtualRules : null,
     });
     return ThemeModel(
       id: id,
@@ -170,7 +174,31 @@ class ThemeRepository {
       iconKey: iconKey,
       sortOrder: sortOrder,
       isPrivate: isPrivate,
+      isVirtual: isVirtual,
+      virtualRules: isVirtual ? virtualRules : null,
     );
+  }
+
+  /// Replace the rules of a virtual album. Ordinary albums are rejected.
+  Future<bool> updateVirtualRules(int themeId, String rulesJson) async {
+    final db = await _db;
+    final rows = await db.query(
+      'themes',
+      columns: ['is_virtual'],
+      where: 'id = ?',
+      whereArgs: [themeId],
+      limit: 1,
+    );
+    if (rows.isEmpty || ((rows.first['is_virtual'] as int?) ?? 0) != 1) {
+      return false;
+    }
+    return await db.update(
+          'themes',
+          {'virtual_rules': rulesJson},
+          where: 'id = ? AND is_virtual = 1',
+          whereArgs: [themeId],
+        ) >
+        0;
   }
 
   Future<void> reorderThemes(List<int> orderedIds, {int? parentId}) async {

@@ -6,12 +6,16 @@ import '../../core/security/private_album_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/clay_assets.dart';
+import '../../data/models/tag_model.dart';
 import '../../data/models/theme_model.dart';
+import '../../data/models/virtual_album_rules.dart';
+import '../../data/repositories/tag_repository.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/clay_card.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/theme_card.dart';
 import '../theme_detail/theme_detail_page.dart';
+import '../theme_detail/virtual_album_rules_page.dart';
 import '../private_album/private_album_password_pages.dart';
 import 'home_controller.dart';
 
@@ -231,6 +235,8 @@ class _HomePageState extends State<HomePage> {
       colorValue: draft.colorValue,
       iconKey: draft.iconKey,
       isPrivate: draft.isPrivate,
+      isVirtual: draft.isVirtual,
+      virtualRules: draft.virtualRules?.encode(),
     );
     if (!context.mounted) return;
     if (created == null) {
@@ -255,6 +261,17 @@ class _HomePageState extends State<HomePage> {
     var colorValue = theme?.colorValue ?? AppColors.coral.toARGB32();
     final iconKey = theme?.iconKey ?? 'album';
     var isPrivate = theme?.isPrivate ?? false;
+    var isVirtual = theme?.isVirtual ?? false;
+    var virtualRules = VirtualAlbumRules.decode(theme?.virtualRules);
+    List<TagModel> tags = const [];
+    if (theme == null || theme.isVirtual) {
+      try {
+        tags = await TagRepository().getTags();
+      } catch (_) {
+        tags = const [];
+      }
+    }
+    if (!context.mounted) return null;
     final result = await showModalBottomSheet<_AlbumDraft>(
       context: context,
       isScrollControlled: true,
@@ -297,7 +314,35 @@ class _HomePageState extends State<HomePage> {
                   value: isPrivate,
                   onChanged: (value) => setSheetState(() => isPrivate = value),
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.auto_awesome_motion_outlined),
+                  title: const Text('虚拟相册'),
+                  subtitle: const Text('按规则自动收集照片，不手动添加'),
+                  value: isVirtual,
+                  onChanged: (value) => setSheetState(() {
+                    isVirtual = value;
+                    if (value) isPrivate = false;
+                  }),
+                ),
                 const SizedBox(height: 8),
+              ],
+              if (isVirtual) ...[
+                const _FieldLabel('收集规则'),
+                const SizedBox(height: 10),
+                VirtualAlbumRulesEditor(
+                  tags: tags,
+                  rules: virtualRules,
+                  onChanged: (value) =>
+                      setSheetState(() => virtualRules = value),
+                ),
+                if (virtualRules.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text('请至少设置一个条件（标签 / 日期 / 仅收藏）',
+                        style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                  ),
+                const SizedBox(height: 12),
               ],
               const _FieldLabel('选择颜色'),
               const SizedBox(height: 10),
@@ -341,6 +386,10 @@ class _HomePageState extends State<HomePage> {
                       _message('分类名称不能为空');
                       return;
                     }
+                    if (isVirtual && virtualRules.isEmpty) {
+                      _message('虚拟相册至少需要一个收集条件');
+                      return;
+                    }
                     Navigator.pop(
                         sheetContext,
                         _AlbumDraft(
@@ -348,6 +397,9 @@ class _HomePageState extends State<HomePage> {
                           colorValue,
                           iconKey,
                           isPrivate,
+                          isVirtual: isVirtual,
+                          virtualRules:
+                              isVirtual ? virtualRules : null,
                         ));
                   },
                   icon: Icon(
@@ -390,6 +442,15 @@ class _HomePageState extends State<HomePage> {
                   _editTheme(theme);
                 },
               ),
+              if (theme.isVirtual)
+                ListTile(
+                  leading: const Icon(Icons.tune_rounded),
+                  title: const Text('编辑收集规则'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _editVirtualRules(context, theme);
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.delete_outline_rounded,
                     color: AppColors.softError),
@@ -418,6 +479,33 @@ class _HomePageState extends State<HomePage> {
       iconKey: draft.iconKey,
     );
     if (!success && mounted) _message(controller.error ?? '编辑分类失败');
+  }
+
+  Future<void> _editVirtualRules(
+      BuildContext context, ThemeModel theme) async {
+    List<TagModel> tags = const [];
+    try {
+      tags = await TagRepository().getTags();
+    } catch (_) {
+      tags = const [];
+    }
+    if (!context.mounted) return;
+    final rules = await Navigator.of(context).push<VirtualAlbumRules>(
+      MaterialPageRoute(
+        builder: (_) => VirtualAlbumRulesPage(
+          tags: tags,
+          initialRules: VirtualAlbumRules.decode(theme.virtualRules),
+          albumName: theme.name,
+        ),
+      ),
+    );
+    if (rules == null || !context.mounted) return;
+    final success = await context
+        .read<HomeController>()
+        .updateVirtualAlbumRules(theme.id!, rules.encode());
+    if (mounted) {
+      _message(success ? '规则已更新' : '规则保存失败');
+    }
   }
 
   Future<void> _confirmDeleteTheme(
@@ -595,10 +683,14 @@ class _AlbumDraft {
   final int colorValue;
   final String iconKey;
   final bool isPrivate;
+  final bool isVirtual;
+  final VirtualAlbumRules? virtualRules;
   const _AlbumDraft(
     this.name,
     this.colorValue,
     this.iconKey,
-    this.isPrivate,
-  );
+    this.isPrivate, {
+    this.isVirtual = false,
+    this.virtualRules,
+  });
 }

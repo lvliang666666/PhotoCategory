@@ -11,6 +11,8 @@ class ThemeModel {
   final String iconKey;
   final int sortOrder;
   final bool isPrivate;
+  final bool isVirtual;
+  final String? virtualRules;
 
   const ThemeModel({
     this.id,
@@ -25,6 +27,8 @@ class ThemeModel {
     this.iconKey = 'album',
     this.sortOrder = 0,
     this.isPrivate = false,
+    this.isVirtual = false,
+    this.virtualRules,
   });
 
   Map<String, dynamic> toMap() {
@@ -41,6 +45,8 @@ class ThemeModel {
       'icon_key': iconKey,
       'sort_order': sortOrder,
       'is_private': isPrivate ? 1 : 0,
+      'is_virtual': isVirtual ? 1 : 0,
+      'virtual_rules': virtualRules,
     };
   }
 
@@ -58,6 +64,8 @@ class ThemeModel {
       iconKey: (map['icon_key'] as String?) ?? 'album',
       sortOrder: (map['sort_order'] as int?) ?? 0,
       isPrivate: ((map['is_private'] as int?) ?? 0) == 1,
+      isVirtual: ((map['is_virtual'] as int?) ?? 0) == 1,
+      virtualRules: map['virtual_rules'] as String?,
     );
   }
 
@@ -77,6 +85,9 @@ class ThemeModel {
     String? iconKey,
     int? sortOrder,
     bool? isPrivate,
+    bool? isVirtual,
+    String? virtualRules,
+    bool clearVirtualRules = false,
   }) {
     return ThemeModel(
       id: id ?? this.id,
@@ -92,6 +103,9 @@ class ThemeModel {
       iconKey: iconKey ?? this.iconKey,
       sortOrder: sortOrder ?? this.sortOrder,
       isPrivate: isPrivate ?? this.isPrivate,
+      isVirtual: isVirtual ?? this.isVirtual,
+      virtualRules:
+          clearVirtualRules ? null : (virtualRules ?? this.virtualRules),
     );
   }
 
