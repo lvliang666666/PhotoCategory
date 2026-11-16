@@ -391,6 +391,109 @@ void main() {
     );
     db = legacy;
   });
+
+  test('v10 升级到 v11 保留照片并添加内容指纹列与索引', () async {
+    await AppDatabase.close();
+    final legacy = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    await legacy.execute('''CREATE TABLE themes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+      description TEXT, cover_photo_id INTEGER, cover_image_path TEXT,
+      created_at INTEGER NOT NULL, is_system INTEGER NOT NULL DEFAULT 0,
+      parent_id INTEGER, color_value INTEGER NOT NULL DEFAULT 0,
+      icon_key TEXT NOT NULL DEFAULT 'album',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_private INTEGER NOT NULL DEFAULT 0)''');
+    await legacy.execute('''CREATE TABLE photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, theme_id INTEGER NOT NULL,
+      local_path TEXT NOT NULL, original_name TEXT, taken_at INTEGER,
+      imported_at INTEGER NOT NULL, media_id TEXT, media_uri TEXT,
+      mime_type TEXT, width INTEGER, height INTEGER,
+      is_favorite INTEGER NOT NULL DEFAULT 0,
+      is_available INTEGER NOT NULL DEFAULT 1, last_seen_at INTEGER,
+      source_type TEXT NOT NULL DEFAULT 'imported',
+      content_modified_at INTEGER, unavailable_reason TEXT,
+      story_text TEXT, story_updated_at INTEGER,
+      is_private INTEGER NOT NULL DEFAULT 0)''');
+    await legacy.insert('themes', {
+      'id': 1,
+      'name': '老相册',
+      'created_at': 88,
+      'is_system': 0,
+      'color_value': 0,
+      'icon_key': 'album',
+    });
+    await legacy.insert('photos', {
+      'id': 1,
+      'theme_id': 1,
+      'local_path': 'legacy.jpg',
+      'imported_at': 99,
+    });
+
+    await AppDatabase.upgradeSchemaForTesting(legacy, 10);
+    expect(await legacy.query('photos', where: 'id = 1'), hasLength(1));
+    final columns = await legacy.rawQuery('PRAGMA table_info(photos)');
+    expect(columns.any((column) => column['name'] == 'content_hash'), isTrue);
+    expect(
+      await legacy.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='index' "
+        "AND name='idx_photos_content_hash'",
+      ),
+      hasLength(1),
+    );
+    db = legacy;
+  });
+
+  test('按内容指纹查重命中已有照片', () async {
+    final photo = await photos.addPhoto(PhotoModel(
+      themeId: systemId,
+      localPath: 'hash-a.jpg',
+      importedAt: 1000,
+      contentHash: 'hash-a',
+    ));
+    expect(await photos.getPhotoIdByContentHash('hash-a'), photo.id);
+    expect(await photos.getPhotoIdByContentHash('hash-missing'), isNull);
+  });
+
+  test('回填查询只返回缺少指纹且有本地路径的照片', () async {
+    await photos.addPhoto(PhotoModel(
+      themeId: systemId,
+      localPath: 'with-hash.jpg',
+      importedAt: 1000,
+      contentHash: 'already-hashed',
+    ));
+    await photos.addPhoto(PhotoModel(
+      themeId: systemId,
+      localPath: 'needs-hash.jpg',
+      importedAt: 1001,
+    ));
+    await photos.addPhoto(PhotoModel(
+      themeId: systemId,
+      localPath: '',
+      importedAt: 1002,
+    ));
+
+    final pending = await photos.getPhotosMissingHash();
+    final names = pending.map((photo) => photo.localPath).toList();
+    expect(names, contains('needs-hash.jpg'));
+    expect(names, isNot(contains('with-hash.jpg')));
+    expect(names, isNot(contains('')));
+  });
+
+  test('图库照片移入相册后同时归属原相册与目标相册', () async {
+    final target = await themes.createTheme('旅行');
+    final photo = await _addPhoto(photos, systemId, 'move-me.jpg', 4000);
+
+    final result = await photos.addCategories([photo.id!], [target.id!]);
+    expect(result.successCount, 1);
+
+    final inTarget =
+        await photos.searchPhotos(PhotoFilter(categoryIds: {target.id!}));
+    expect(inTarget.single.id, photo.id);
+    // 多对多语义：照片仍归属原（系统）相册，图库列表不受影响。
+    final inSystem =
+        await photos.searchPhotos(PhotoFilter(categoryIds: {systemId}));
+    expect(inSystem.map((p) => p.id), contains(photo.id));
+  });
 }
 
 Future<PhotoModel> _addPhoto(

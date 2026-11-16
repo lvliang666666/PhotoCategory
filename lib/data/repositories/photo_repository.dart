@@ -201,6 +201,42 @@ class PhotoRepository {
     return rows.isEmpty ? null : PhotoModel.fromMap(rows.first);
   }
 
+  /// Returns the id of an existing photo with the same content hash, or null.
+  /// Used by the import pipeline to skip duplicate files.
+  Future<int?> getPhotoIdByContentHash(String hash) async {
+    final db = await _db;
+    final rows = await db.query(
+      'photos',
+      columns: ['id'],
+      where: 'content_hash = ?',
+      whereArgs: [hash],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['id'] as int;
+  }
+
+  /// Photos that still lack a content fingerprint (legacy imports).
+  Future<List<PhotoModel>> getPhotosMissingHash({int limit = 50}) async {
+    final db = await _db;
+    final rows = await db.query(
+      'photos',
+      where: 'content_hash IS NULL AND TRIM(local_path) != ?',
+      whereArgs: [''],
+      limit: limit,
+    );
+    return rows.map(PhotoModel.fromMap).toList();
+  }
+
+  Future<void> updateContentHash(int photoId, String hash) async {
+    final db = await _db;
+    await db.update(
+      'photos',
+      {'content_hash': hash},
+      where: 'id = ?',
+      whereArgs: [photoId],
+    );
+  }
+
   Future<PhotoModel?> getLatestPhoto(int themeId) async {
     final photos = await searchPhotos(
       PhotoFilter(categoryIds: {themeId}),

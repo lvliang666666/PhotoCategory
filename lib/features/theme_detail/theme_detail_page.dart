@@ -224,8 +224,11 @@ class _ThemeDetailPageState extends State<ThemeDetailPage> {
         if (notification.metrics.extentAfter < 500) controller.loadMore();
         return false;
       },
-      child: CustomScrollView(
-        slivers: [
+      child: RefreshIndicator(
+        onRefresh: controller.refresh,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
           SliverToBoxAdapter(child: _buildCoverSection(context, controller)),
           SliverToBoxAdapter(
               child: _buildDescriptionSection(context, controller)),
@@ -276,6 +279,7 @@ class _ThemeDetailPageState extends State<ThemeDetailPage> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -285,17 +289,6 @@ class _ThemeDetailPageState extends State<ThemeDetailPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ClayActionButton(
-          assetPath: ClayAssets.refreshButton,
-          tooltip: '刷新当前相册',
-          size: 50,
-          zoom: 1.72,
-          loading: controller.isRefreshing,
-          onPressed: controller.isRefreshing || controller.isImporting
-              ? null
-              : controller.refresh,
-        ),
-        const SizedBox(height: 6),
         ClayActionButton(
           assetPath: ClayAssets.addPurple,
           tooltip: '从手机相册批量导入',
@@ -1364,6 +1357,9 @@ class _ThemeDetailPageState extends State<ThemeDetailPage> {
     final messages = <String>[];
     if (result.successCount > 0) {
       messages.add('已导入 ${result.successCount} 张照片');
+    }
+    if (result.skippedCount > 0) {
+      messages.add('跳过 ${result.skippedCount} 张重复');
     }
     if (result.failCount > 0) {
       messages.add('${result.failCount} 张照片导入失败');

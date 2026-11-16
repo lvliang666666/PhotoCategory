@@ -95,12 +95,18 @@ class AppDatabase {
         story_text TEXT,
         story_updated_at INTEGER,
         is_private INTEGER NOT NULL DEFAULT 0,
+        content_hash TEXT,
         FOREIGN KEY (theme_id) REFERENCES themes(id) ON DELETE CASCADE
       )
     ''');
 
     await db.execute('''
       CREATE INDEX idx_photos_theme_id ON photos(theme_id)
+    ''');
+
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_photos_content_hash
+      ON photos(content_hash)
     ''');
 
     await db.execute('''
@@ -210,6 +216,15 @@ class AppDatabase {
         );
         await _createV10Tables(txn);
       });
+    }
+    if (oldVersion < 11) {
+      // Content fingerprint column powers import dedup. Existing rows keep
+      // NULL and are backfilled lazily at app startup.
+      await _addColumnIfMissing(db, 'photos', 'content_hash', 'TEXT');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_photos_content_hash '
+        'ON photos(content_hash)',
+      );
     }
   }
 

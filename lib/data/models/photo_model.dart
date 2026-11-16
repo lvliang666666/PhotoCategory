@@ -33,6 +33,7 @@ class PhotoModel {
   final String? storyText;
   final int? storyUpdatedAt;
   final bool isPrivate;
+  final String? contentHash;
 
   const PhotoModel({
     this.id,
@@ -55,6 +56,7 @@ class PhotoModel {
     this.storyText,
     this.storyUpdatedAt,
     this.isPrivate = false,
+    this.contentHash,
   });
 
   Map<String, dynamic> toMap() {
@@ -79,6 +81,7 @@ class PhotoModel {
       'story_text': storyText,
       'story_updated_at': storyUpdatedAt,
       'is_private': isPrivate ? 1 : 0,
+      'content_hash': contentHash,
     };
   }
 
@@ -104,6 +107,7 @@ class PhotoModel {
       storyText: map['story_text'] as String?,
       storyUpdatedAt: map['story_updated_at'] as int?,
       isPrivate: ((map['is_private'] as int?) ?? 0) == 1,
+      contentHash: map['content_hash'] as String?,
     );
   }
 
@@ -131,6 +135,7 @@ class PhotoModel {
     int? storyUpdatedAt,
     bool clearStoryUpdatedAt = false,
     bool? isPrivate,
+    String? contentHash,
   }) {
     return PhotoModel(
       id: id ?? this.id,
@@ -154,6 +159,7 @@ class PhotoModel {
       storyUpdatedAt:
           clearStoryUpdatedAt ? null : (storyUpdatedAt ?? this.storyUpdatedAt),
       isPrivate: isPrivate ?? this.isPrivate,
+      contentHash: contentHash ?? this.contentHash,
     );
   }
 

@@ -27,6 +27,7 @@ class LibraryController extends ChangeNotifier {
   List<TagModel> tags = [];
   PhotoFilter filter = const PhotoFilter();
   SmartAlbum smartAlbum = SmartAlbum.all;
+  bool groupByTime = false;
   bool isLoading = false;
   bool isOperating = false;
   bool isLoadingMore = false;
@@ -143,6 +144,13 @@ class LibraryController extends ChangeNotifier {
     await refresh();
   }
 
+  /// Toggle the "group by month" view mode. Pure view switch — the photo
+  /// list is already sorted by time, so no reload is needed.
+  void toggleGroupByTime() {
+    groupByTime = !groupByTime;
+    notifyListeners();
+  }
+
   Future<void> refresh() async {
     isLoading = true;
     error = null;
@@ -155,6 +163,19 @@ class LibraryController extends ChangeNotifier {
       error = '图库刷新失败，请稍后重试';
     } finally {
       isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Reload the current page of photos without toggling the full-screen
+  /// loading state. Used when a kept-alive tab becomes visible again so new
+  /// imports show up without a loading flash.
+  Future<void> silentRefresh() async {
+    try {
+      await _loadPhotos(reset: true).timeout(const Duration(seconds: 12));
+    } catch (_) {
+      // Keep showing the previous content on failure.
+    } finally {
       notifyListeners();
     }
   }
@@ -233,6 +254,11 @@ class LibraryController extends ChangeNotifier {
 
   Future<BatchOperationResult> addSelectedCategories(List<int> ids) =>
       _perform(() => _photos.addCategories(selectedIds.toList(), ids));
+
+  /// Move the selected photos into a single album (adds them to it; photos
+  /// may belong to multiple albums, so they stay visible in the library).
+  Future<BatchOperationResult> moveSelectedToTheme(int themeId) =>
+      _perform(() => _photos.addCategories(selectedIds.toList(), [themeId]));
 
   Future<BatchOperationResult> removeSelectedCategories(List<int> ids) =>
       _perform(() => _photos.removeCategories(selectedIds.toList(), ids));
