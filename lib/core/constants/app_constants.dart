@@ -4,7 +4,7 @@ class AppConstants {
   static const String appName = '相册分类';
 
   static const String dbName = 'photo_storer.db';
-  static const int dbVersion = 10;
+  static const int dbVersion = 12;
 
   static const String photosDirName = 'photos';
   static const String coversDirName = 'album_covers';

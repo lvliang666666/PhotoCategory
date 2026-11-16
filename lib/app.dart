@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'core/feedback/interaction_feedback.dart';
 import 'core/theme/app_theme_controller.dart';
 import 'core/security/app_lock_controller.dart';
+import 'core/security/private_album_controller.dart';
 import 'features/app_lock/app_lock_pages.dart';
 import 'features/home/home_page.dart';
 import 'features/library/library_page.dart';
@@ -40,6 +41,9 @@ class _PhotoStorerAppState extends State<PhotoStorerApp>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       lock.markBackgrounded();
+      // Private albums relock immediately on background: the user expects to
+      // re-enter the password every time the app is left and reopened.
+      context.read<PrivateAlbumController>().lockAll();
     } else if (state == AppLifecycleState.resumed) {
       lock.handleResumed();
     }
@@ -87,6 +91,10 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
 
+  /// Bumped every time the gallery or timeline tab is (re)selected so the
+  /// kept-alive pages inside the IndexedStack can silently reload new data.
+  final ValueNotifier<int> _tabRefreshSignal = ValueNotifier<int>(0);
+
   late final List<Widget?> _pages;
 
   @override
@@ -98,10 +106,16 @@ class _MainShellState extends State<MainShell> {
     _pages = <Widget?>[const HomePage(), null, null, null];
   }
 
+  @override
+  void dispose() {
+    _tabRefreshSignal.dispose();
+    super.dispose();
+  }
+
   Widget _pageFor(int index) => switch (index) {
         0 => const HomePage(),
-        1 => const LibraryPage(),
-        2 => const TimelinePage(),
+        1 => LibraryPage(refreshSignal: _tabRefreshSignal),
+        2 => TimelinePage(refreshSignal: _tabRefreshSignal),
         _ => const SettingsPage(),
       };
 
@@ -122,6 +136,9 @@ class _MainShellState extends State<MainShell> {
             _pages[index] ??= _pageFor(index);
             _currentIndex = index;
           });
+          if (index == 1 || index == 2) {
+            _tabRefreshSignal.value++;
+          }
         },
       ),
     );

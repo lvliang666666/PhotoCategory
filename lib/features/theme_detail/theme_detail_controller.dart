@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/photo_model.dart';
 import '../../data/models/theme_model.dart';
+import '../../data/models/virtual_album_rules.dart';
 import '../../data/repositories/photo_repository.dart';
 import '../../data/repositories/theme_repository.dart';
 import '../../data/services/album_cover_service.dart';
@@ -95,6 +96,11 @@ class ThemeDetailController extends ChangeNotifier {
   Future<void> _refreshData() async {
     if (_theme == null) return;
 
+    if (_theme!.isVirtual) {
+      await _refreshVirtualData();
+      return;
+    }
+
     // Load photos
     _photos = await _photoRepository.getPhotosByTheme(_theme!.id!);
     _photoCount = await _themeRepository.getPhotoCount(_theme!.id!);
@@ -137,6 +143,24 @@ class ThemeDetailController extends ChangeNotifier {
 
     _coverPhoto = coverPhoto;
     _coverPath = _theme!.coverImagePath ?? coverPhoto?.localPath;
+  }
+
+  /// Virtual albums own no photos directly — they materialize the photos
+  /// matching their stored rules. No sub-albums, no manual cover.
+  Future<void> _refreshVirtualData() async {
+    final rules = VirtualAlbumRules.decode(_theme!.virtualRules);
+    final filter = rules.toPhotoFilter();
+    _photos = await _photoRepository.searchPhotos(
+      filter,
+      limit: AppConstants.libraryPageSize,
+    );
+    _photoCount = await _photoRepository.countPhotos(filter);
+    _subAlbums = <ThemeModel>[];
+    _subAlbumCounts.clear();
+    _subAlbumCoverPaths.clear();
+    _subAlbumCoverMediaIds.clear();
+    _coverPhoto = _photos.isEmpty ? null : _photos.first;
+    _coverPath = _coverPhoto?.localPath;
   }
 
   Future<bool> createSubAlbum(String name,
@@ -528,10 +552,19 @@ class ThemeDetailController extends ChangeNotifier {
     _isLoadingMore = true;
     notifyListeners();
     try {
-      final page = await _photoRepository.getPhotosByTheme(
-        _theme!.id!,
-        offset: _photos.length,
-      );
+      final List<PhotoModel> page;
+      if (_theme!.isVirtual) {
+        page = await _photoRepository.searchPhotos(
+          VirtualAlbumRules.decode(_theme!.virtualRules).toPhotoFilter(),
+          limit: AppConstants.libraryPageSize,
+          offset: _photos.length,
+        );
+      } else {
+        page = await _photoRepository.getPhotosByTheme(
+          _theme!.id!,
+          offset: _photos.length,
+        );
+      }
       final existing = _photos.map((photo) => photo.id).toSet();
       _photos = [
         ..._photos,

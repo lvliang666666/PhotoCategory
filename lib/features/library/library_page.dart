@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:collection';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -5,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../core/theme/clay_assets.dart';
 import '../../data/models/photo_filter.dart';
+import '../../data/models/photo_model.dart';
 import '../../data/repositories/photo_repository.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/empty_state.dart';
@@ -16,7 +21,11 @@ import '../photo_viewer/photo_viewer_page.dart';
 import 'library_controller.dart';
 
 class LibraryPage extends StatefulWidget {
-  const LibraryPage({super.key});
+  /// Bumped by the main shell whenever this tab is selected again, so the
+  /// kept-alive page can silently reload photos imported since last visit.
+  final ValueListenable<int>? refreshSignal;
+
+  const LibraryPage({super.key, this.refreshSignal});
 
   @override
   State<LibraryPage> createState() => _LibraryPageState();
@@ -24,9 +33,45 @@ class LibraryPage extends StatefulWidget {
 
 class _LibraryPageState extends State<LibraryPage> {
   final _searchController = TextEditingController();
+  VoidCallback? _signalListener;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenRefreshSignal();
+  }
+
+  @override
+  void didUpdateWidget(covariant LibraryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshSignal != widget.refreshSignal) {
+      _detachRefreshSignal();
+      _listenRefreshSignal();
+    }
+  }
+
+  void _listenRefreshSignal() {
+    final signal = widget.refreshSignal;
+    if (signal == null) return;
+    _signalListener = () {
+      if (!mounted) return;
+      context.read<LibraryController>().silentRefresh();
+    };
+    signal.addListener(_signalListener!);
+  }
+
+  void _detachRefreshSignal() {
+    final signal = widget.refreshSignal;
+    final listener = _signalListener;
+    if (signal != null && listener != null) {
+      signal.removeListener(listener);
+    }
+    _signalListener = null;
+  }
 
   @override
   void dispose() {
+    _detachRefreshSignal();
     _searchController.dispose();
     super.dispose();
   }
@@ -61,7 +106,13 @@ class _LibraryPageState extends State<LibraryPage> {
                 _loadSummary(controller),
                 if (!controller.filter.isEmpty) _activeFilters(controller),
               ],
-              Expanded(child: _content(context, controller)),
+              // Keyed so entering/leaving selection mode (which removes the
+              // widgets above) does NOT rebuild the grid subtree — rebuilding
+              // would reset the scroll position to the top.
+              Expanded(
+                key: const ValueKey('library-content'),
+                child: _content(context, controller),
+              ),
               if (controller.isSelecting) _batchBar(context, controller),
             ],
           ),
@@ -141,16 +192,32 @@ class _LibraryPageState extends State<LibraryPage> {
       child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
-        children: labels.entries
-            .map((entry) => Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(entry.value),
-                    selected: controller.smartAlbum == entry.key,
-                    onSelected: (_) => controller.selectSmartAlbum(entry.key),
-                  ),
-                ))
-            .toList(),
+        children: [
+          for (final entry in labels.entries)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                label: Text(entry.value),
+                selected: controller.smartAlbum == entry.key,
+                onSelected: (_) => controller.selectSmartAlbum(entry.key),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              avatar: Icon(
+                Icons.calendar_view_month_rounded,
+                size: 18,
+                color: controller.groupByTime
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+              label: const Text('按时间分组'),
+              selected: controller.groupByTime,
+              onSelected: (_) => controller.toggleGroupByTime(),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -215,83 +282,155 @@ class _LibraryPageState extends State<LibraryPage> {
           }
           return false;
         },
-        child: GridView.builder(
-          padding: const EdgeInsets.fromLTRB(6, 4, 6, 100),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-          ),
-          itemCount: controller.photos.length + (controller.hasMore ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (index == controller.photos.length) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final photo = controller.photos[index];
-            final selected = controller.selectedIds.contains(photo.id);
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: InkWell(
-                    onLongPress: photo.id == null
-                        ? null
-                        : () => controller.toggleSelection(photo.id!),
-                    onTap: () async {
-                      if (controller.isSelecting && photo.id != null) {
-                        controller.toggleSelection(photo.id!);
-                        return;
-                      }
-                      await controller.recordView(photo);
-                      if (!context.mounted) return;
-                      Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => PhotoViewerPage(
-                          photos: controller.photos,
-                          initialIndex: index,
-                          themeName: '图库',
-                        ),
-                      ));
-                    },
-                    child: Hero(
-                      tag: photo.heroTag,
-                      transitionOnUserGestures: true,
-                      child: MediaThumbnail(photo: photo),
-                    ),
-                  ),
-                ),
-                if (controller.isSelecting)
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      width: 26,
-                      height: 26,
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? Theme.of(context).colorScheme.primary
-                            : Colors.white.withValues(alpha: .72),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                      ),
-                      child: selected
-                          ? const Icon(Icons.check_rounded,
-                              size: 17, color: Colors.white)
-                          : null,
-                    ),
-                  ),
-                if (!photo.isAvailable)
-                  const Positioned(
-                    left: 6,
-                    bottom: 6,
-                    child: Chip(label: Text('不可用')),
-                  ),
-              ],
-            );
-          },
-        ),
+        child: controller.groupByTime
+            ? _groupedGrid(context, controller)
+            : _flatGrid(context, controller),
       ),
+    );
+  }
+
+  Widget _flatGrid(BuildContext context, LibraryController controller) {
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(6, 4, 6, 100),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 6,
+        crossAxisSpacing: 6,
+      ),
+      itemCount: controller.photos.length + (controller.hasMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == controller.photos.length) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return _buildPhotoCell(context, controller, index);
+      },
+    );
+  }
+
+  /// Month-grouped view, mirroring the timeline page's grouping.
+  Widget _groupedGrid(BuildContext context, LibraryController controller) {
+    final groups = _groupPhotoIndexes(controller.photos);
+    return CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        for (final entry in groups.entries) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
+              child: Text(
+                entry.key,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            sliver: SliverGrid.builder(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 6,
+                crossAxisSpacing: 6,
+              ),
+              itemCount: entry.value.length,
+              itemBuilder: (context, itemIndex) =>
+                  _buildPhotoCell(context, controller, entry.value[itemIndex]),
+            ),
+          ),
+        ],
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Center(
+              child: controller.hasMore
+                  ? const CircularProgressIndicator()
+                  : Text(
+                      '已加载 ${controller.photos.length} / ${controller.totalCount} 张'),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Groups photo indexes by 'YYYY 年 M 月' preserving the list order
+  /// (photos arrive sorted by COALESCE(taken_at, imported_at) DESC).
+  Map<String, List<int>> _groupPhotoIndexes(List<PhotoModel> photos) {
+    final groups = <String, List<int>>{};
+    for (var i = 0; i < photos.length; i++) {
+      final photo = photos[i];
+      final seconds = photo.takenAt ?? photo.importedAt;
+      final date = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+      final key = '${date.year} 年 ${date.month} 月';
+      groups.putIfAbsent(key, () => []).add(i);
+    }
+    return groups;
+  }
+
+  Widget _buildPhotoCell(
+      BuildContext context, LibraryController controller, int index) {
+    final photo = controller.photos[index];
+    final selected = controller.selectedIds.contains(photo.id);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            onLongPress: photo.id == null
+                ? null
+                : () => controller.toggleSelection(photo.id!),
+            onTap: () async {
+              if (controller.isSelecting && photo.id != null) {
+                controller.toggleSelection(photo.id!);
+                return;
+              }
+              await controller.recordView(photo);
+              if (!context.mounted) return;
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => PhotoViewerPage(
+                  photos: controller.photos,
+                  initialIndex: index,
+                  themeName: '图库',
+                ),
+              ));
+            },
+            child: Hero(
+              tag: photo.heroTag,
+              transitionOnUserGestures: true,
+              child: MediaThumbnail(photo: photo),
+            ),
+          ),
+        ),
+        if (controller.isSelecting)
+          Positioned(
+            top: 8,
+            right: 8,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                color: selected
+                    ? Theme.of(context).colorScheme.primary
+                    : Colors.white.withValues(alpha: .72),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: selected
+                  ? const Icon(Icons.check_rounded,
+                      size: 17, color: Colors.white)
+                  : null,
+            ),
+          ),
+        if (!photo.isAvailable)
+          const Positioned(
+            left: 6,
+            bottom: 6,
+            child: Chip(label: Text('不可用')),
+          ),
+      ],
     );
   }
 
@@ -299,17 +438,6 @@ class _LibraryPageState extends State<LibraryPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ClayActionButton(
-          assetPath: ClayAssets.refreshButton,
-          tooltip: '刷新当前照片',
-          size: 50,
-          zoom: 1.72,
-          loading: controller.isLoading,
-          onPressed: controller.isLoading || controller.isImporting
-              ? null
-              : controller.refresh,
-        ),
-        const SizedBox(height: 6),
         ClayActionButton(
           assetPath: ClayAssets.addPurple,
           tooltip: '从手机相册批量导入',
@@ -343,9 +471,13 @@ class _LibraryPageState extends State<LibraryPage> {
       selected.map((photo) => photo.path).toList(),
     );
     if (!context.mounted) return;
-    final message = result.failCount == 0
-        ? '已导入 ${result.successCount} 张照片'
-        : '导入完成：成功 ${result.successCount} 张，失败 ${result.failCount} 张';
+    final parts = <String>[];
+    if (result.successCount > 0) parts.add('已导入 ${result.successCount} 张照片');
+    if (result.skippedCount > 0) parts.add('跳过 ${result.skippedCount} 张重复');
+    if (result.failCount > 0) parts.add('失败 ${result.failCount} 张');
+    final message = parts.isEmpty
+        ? '没有新照片需要导入'
+        : parts.join('，');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -365,6 +497,12 @@ class _LibraryPageState extends State<LibraryPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
+                _batchButton(
+                    Icons.drive_file_move_outline,
+                    '移入',
+                    controller.isOperating
+                        ? null
+                        : () => _moveSelectedToAlbum(context, controller)),
                 _batchButton(
                     Icons.photo_album_rounded,
                     '分类',
@@ -569,6 +707,28 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
       ),
     );
+  }
+
+  /// Move the selected photos into one album picked by the user.
+  Future<void> _moveSelectedToAlbum(
+      BuildContext context, LibraryController controller) async {
+    final albums =
+        controller.categories.where((c) => !c.isSystem).toList();
+    if (albums.isEmpty) {
+      _message(context, '请先创建分类');
+      return;
+    }
+    final selected = await showHierarchicalAlbumPicker(
+      context,
+      albums: controller.categories,
+      title: '移入相册',
+      allowMultiple: false,
+    );
+    if (selected == null || selected.isEmpty || !context.mounted) return;
+    final result = await controller.moveSelectedToTheme(selected.first);
+    if (!context.mounted) return;
+    _showBatchResult(context, result,
+        onRetry: () => _moveSelectedToAlbum(context, controller));
   }
 
   Future<void> _showRelationSheet(

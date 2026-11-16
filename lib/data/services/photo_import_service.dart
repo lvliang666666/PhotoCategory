@@ -14,11 +14,13 @@ import '../repositories/photo_repository.dart';
 class PhotoImportResult {
   final int successCount;
   final int failCount;
+  final int skippedCount;
   final List<String> errors;
 
   const PhotoImportResult({
     required this.successCount,
     required this.failCount,
+    this.skippedCount = 0,
     required this.errors,
   });
 }
@@ -29,8 +31,9 @@ class PhotoImportService {
   final PhotoRepository _photoRepository = PhotoRepository();
 
   /// Import multiple photos into a theme.
-  /// Each photo is processed sequentially: copy file → read EXIF → insert DB.
-  /// Failures on individual photos do not abort the entire batch.
+  /// Each photo is processed sequentially: dedup check → copy file → read
+  /// EXIF → insert DB. Failures on individual photos do not abort the batch.
+  /// Files whose content hash already exists in the library are skipped.
   Future<PhotoImportResult> importPhotos({
     required List<String> sourcePaths,
     required int themeId,
@@ -39,6 +42,7 @@ class PhotoImportService {
   }) async {
     int successCount = 0;
     int failCount = 0;
+    int skippedCount = 0;
     final errors = <String>[];
 
     final appDir = await getApplicationDocumentsDirectory();
@@ -56,6 +60,19 @@ class PhotoImportService {
           failCount++;
           errors.add('文件不存在: ${p.basename(sourcePath)}');
           continue;
+        }
+
+        // Dedup by content hash before copying anything. The hash of the
+        // SOURCE file is what gets stored: normalization may rewrite bytes,
+        // but the source hash stays stable for repeat imports.
+        final contentHash = await FileUtils.computeFileHash(sourcePath);
+        if (contentHash != null) {
+          final existingId =
+              await _photoRepository.getPhotoIdByContentHash(contentHash);
+          if (existingId != null) {
+            skippedCount++;
+            continue;
+          }
         }
 
         final uniqueName =
@@ -77,6 +94,7 @@ class PhotoImportService {
           takenAt: takenAt,
           importedAt: now,
           sourceType: PhotoSourceType.imported,
+          contentHash: contentHash,
         );
 
         await _photoRepository.addPhoto(
@@ -96,6 +114,7 @@ class PhotoImportService {
     return PhotoImportResult(
       successCount: successCount,
       failCount: failCount,
+      skippedCount: skippedCount,
       errors: errors,
     );
   }
@@ -165,6 +184,29 @@ class PhotoImportService {
     } catch (_) {
       // EXIF reading is best-effort. Never fail an import because of it.
       return null;
+    }
+  }
+
+  /// Backfill content hashes for photos imported before dedup existed.
+  /// Runs in small batches with pauses so it never competes with the UI,
+  /// and swallows all errors — hashing is best-effort enrichment.
+  static Future<void> backfillContentHashes() async {
+    final repository = PhotoRepository();
+    const batchDelay = Duration(milliseconds: 50);
+    try {
+      while (true) {
+        final pending = await repository.getPhotosMissingHash(limit: 20);
+        if (pending.isEmpty) return;
+        for (final photo in pending) {
+          final hash = await FileUtils.computeFileHash(photo.localPath);
+          if (hash != null) {
+            await repository.updateContentHash(photo.id!, hash);
+          }
+          await Future<void>.delayed(batchDelay);
+        }
+      }
+    } catch (_) {
+      // Backfill is opportunistic; a failed run simply retries next launch.
     }
   }
 }

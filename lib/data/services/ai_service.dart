@@ -29,6 +29,47 @@ class MomentsCaption {
   const MomentsCaption({required this.style, required this.text});
 }
 
+/// Persistent "personal traits" that shape generated captions so they read
+/// like the user wrote them. Stored locally, injected into the system prompt
+/// when enabled.
+class AiPersona {
+  final bool enabled;
+  final String identity;
+  final String tone;
+  final String elements;
+  final String avoid;
+
+  const AiPersona({
+    this.enabled = false,
+    this.identity = '',
+    this.tone = '',
+    this.elements = '',
+    this.avoid = '',
+  });
+
+  bool get hasContent =>
+      identity.trim().isNotEmpty ||
+      tone.trim().isNotEmpty ||
+      elements.trim().isNotEmpty ||
+      avoid.trim().isNotEmpty;
+
+  Map<String, dynamic> toJson() => {
+        'enabled': enabled,
+        'identity': identity,
+        'tone': tone,
+        'elements': elements,
+        'avoid': avoid,
+      };
+
+  factory AiPersona.fromJson(Map<String, dynamic> json) => AiPersona(
+        enabled: json['enabled'] == true,
+        identity: json['identity']?.toString() ?? '',
+        tone: json['tone']?.toString() ?? '',
+        elements: json['elements']?.toString() ?? '',
+        avoid: json['avoid']?.toString() ?? '',
+      );
+}
+
 class AiServiceException implements Exception {
   final String message;
 
@@ -41,9 +82,72 @@ class AiServiceException implements Exception {
 class AiService {
   static const _baseUrlKey = 'ai_base_url';
   static const _modelKey = 'ai_model';
+  static const _personaKey = 'ai_persona';
   static const _secureApiKey = 'deepseek_api_key';
   static const _secureChannel =
       MethodChannel('com.photostorer.photo_storer/secure_storage');
+
+  Future<AiPersona> loadPersona() async {
+    final preferences = await SharedPreferences.getInstance();
+    final raw = preferences.getString(_personaKey);
+    if (raw == null || raw.isEmpty) return const AiPersona();
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic>
+          ? AiPersona.fromJson(decoded)
+          : const AiPersona();
+    } catch (_) {
+      return const AiPersona();
+    }
+  }
+
+  Future<void> savePersona(AiPersona persona) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_personaKey, jsonEncode(persona.toJson()));
+  }
+
+  /// Builds the system-prompt section describing the user's persona.
+  /// Empty (or disabled) personas produce an empty string.
+  static String buildPersonaPromptSection(AiPersona persona) {
+    if (!persona.enabled || !persona.hasContent) return '';
+    final lines = <String>[];
+    final identity = persona.identity.trim();
+    final tone = persona.tone.trim();
+    final elements = persona.elements.trim();
+    final avoid = persona.avoid.trim();
+    if (identity.isNotEmpty) lines.add('身份背景：$identity');
+    if (tone.isNotEmpty) lines.add('语气习惯：$tone');
+    if (elements.isNotEmpty) lines.add('常用元素：$elements');
+    if (avoid.isNotEmpty) lines.add('避免出现：$avoid');
+    if (lines.isEmpty) return '';
+    return '用户的个人特征（文案必须符合这个人设，像用户本人写的）：\n'
+        '${lines.join('\n')}';
+  }
+
+  /// Lets the user describe themselves loosely and get a structured persona
+  /// draft back, which the settings page fills into the editable fields.
+  Future<String> generatePersonaDraft(String rawDescription) async {
+    final description = rawDescription.trim();
+    if (description.isEmpty) {
+      throw const AiServiceException('请先随便写几句关于自己的描述');
+    }
+    final config = await loadConfig();
+    final apiKey = await _readApiKey();
+    if (apiKey == null || apiKey.isEmpty) {
+      throw const AiServiceException('请先在“设置 → AI服务”中填写 API Key');
+    }
+    return _complete(
+      baseUrl: config.baseUrl,
+      model: config.model,
+      apiKey: apiKey,
+      systemPrompt: '你是朋友圈人设整理助手。把用户随手写的自我描述整理成四行，'
+          '每行格式严格为「标签：内容」，标签依次为：身份背景、语气习惯、常用元素、避免出现。'
+          '用户没提到的维度写「未提及」。不要输出其他任何内容。',
+      userPrompt: description,
+      maxTokens: 300,
+      jsonOutput: false,
+    );
+  }
 
   Future<AiConfig> loadConfig() async {
     final preferences = await SharedPreferences.getInstance();
@@ -133,12 +237,16 @@ class AiService {
           '照片故事：${story?.isNotEmpty == true ? story : '无'}';
     }).join('\n');
 
+    final personaSection =
+        buildPersonaPromptSection(await loadPersona());
+
     final response = await _complete(
       baseUrl: config.baseUrl,
       model: config.model,
       apiKey: apiKey,
       systemPrompt: '''你是一位自然、克制的中文朋友圈文案编辑。
 根据用户提供的照片元数据、照片故事和补充说明生成文案。不得声称看到了照片中未提供的信息，不编造人物、地点或事件。
+${personaSection.isEmpty ? '' : '$personaSection\n'}
 只输出合法 JSON，格式为：{"captions":[{"style":"简短自然","text":"..."},{"style":"文艺情绪","text":"..."},{"style":"轻松表达","text":"..."}]}。
 每条文案应彼此不同，适合直接发布，不添加解释、Markdown 或代码块。''',
       userPrompt: '''照片数量：${photos.length}

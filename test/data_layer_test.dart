@@ -5,6 +5,7 @@ import 'package:photo_storer/core/constants/app_constants.dart';
 import 'package:photo_storer/data/database/app_database.dart';
 import 'package:photo_storer/data/models/photo_filter.dart';
 import 'package:photo_storer/data/models/photo_model.dart';
+import 'package:photo_storer/data/models/virtual_album_rules.dart';
 import 'package:photo_storer/data/repositories/photo_repository.dart';
 import 'package:photo_storer/data/repositories/private_album_repository.dart';
 import 'package:photo_storer/data/repositories/tag_repository.dart';
@@ -390,6 +391,220 @@ void main() {
       hasLength(1),
     );
     db = legacy;
+  });
+
+  test('v10 升级到 v11 保留照片并添加内容指纹列与索引', () async {
+    await AppDatabase.close();
+    final legacy = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    await legacy.execute('''CREATE TABLE themes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+      description TEXT, cover_photo_id INTEGER, cover_image_path TEXT,
+      created_at INTEGER NOT NULL, is_system INTEGER NOT NULL DEFAULT 0,
+      parent_id INTEGER, color_value INTEGER NOT NULL DEFAULT 0,
+      icon_key TEXT NOT NULL DEFAULT 'album',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_private INTEGER NOT NULL DEFAULT 0)''');
+    await legacy.execute('''CREATE TABLE photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, theme_id INTEGER NOT NULL,
+      local_path TEXT NOT NULL, original_name TEXT, taken_at INTEGER,
+      imported_at INTEGER NOT NULL, media_id TEXT, media_uri TEXT,
+      mime_type TEXT, width INTEGER, height INTEGER,
+      is_favorite INTEGER NOT NULL DEFAULT 0,
+      is_available INTEGER NOT NULL DEFAULT 1, last_seen_at INTEGER,
+      source_type TEXT NOT NULL DEFAULT 'imported',
+      content_modified_at INTEGER, unavailable_reason TEXT,
+      story_text TEXT, story_updated_at INTEGER,
+      is_private INTEGER NOT NULL DEFAULT 0)''');
+    await legacy.insert('themes', {
+      'id': 1,
+      'name': '老相册',
+      'created_at': 88,
+      'is_system': 0,
+      'color_value': 0,
+      'icon_key': 'album',
+    });
+    await legacy.insert('photos', {
+      'id': 1,
+      'theme_id': 1,
+      'local_path': 'legacy.jpg',
+      'imported_at': 99,
+    });
+
+    await AppDatabase.upgradeSchemaForTesting(legacy, 10);
+    expect(await legacy.query('photos', where: 'id = 1'), hasLength(1));
+    final columns = await legacy.rawQuery('PRAGMA table_info(photos)');
+    expect(columns.any((column) => column['name'] == 'content_hash'), isTrue);
+    expect(
+      await legacy.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='index' "
+        "AND name='idx_photos_content_hash'",
+      ),
+      hasLength(1),
+    );
+    db = legacy;
+  });
+
+  test('按内容指纹查重命中已有照片', () async {
+    final photo = await photos.addPhoto(PhotoModel(
+      themeId: systemId,
+      localPath: 'hash-a.jpg',
+      importedAt: 1000,
+      contentHash: 'hash-a',
+    ));
+    expect(await photos.getPhotoIdByContentHash('hash-a'), photo.id);
+    expect(await photos.getPhotoIdByContentHash('hash-missing'), isNull);
+  });
+
+  test('回填查询只返回缺少指纹且有本地路径的照片', () async {
+    await photos.addPhoto(PhotoModel(
+      themeId: systemId,
+      localPath: 'with-hash.jpg',
+      importedAt: 1000,
+      contentHash: 'already-hashed',
+    ));
+    await photos.addPhoto(PhotoModel(
+      themeId: systemId,
+      localPath: 'needs-hash.jpg',
+      importedAt: 1001,
+    ));
+    await photos.addPhoto(PhotoModel(
+      themeId: systemId,
+      localPath: '',
+      importedAt: 1002,
+    ));
+
+    final pending = await photos.getPhotosMissingHash();
+    final names = pending.map((photo) => photo.localPath).toList();
+    expect(names, contains('needs-hash.jpg'));
+    expect(names, isNot(contains('with-hash.jpg')));
+    expect(names, isNot(contains('')));
+  });
+
+  test('图库照片移入相册后同时归属原相册与目标相册', () async {
+    final target = await themes.createTheme('旅行');
+    final photo = await _addPhoto(photos, systemId, 'move-me.jpg', 4000);
+
+    final result = await photos.addCategories([photo.id!], [target.id!]);
+    expect(result.successCount, 1);
+
+    final inTarget =
+        await photos.searchPhotos(PhotoFilter(categoryIds: {target.id!}));
+    expect(inTarget.single.id, photo.id);
+    // 多对多语义：照片仍归属原（系统）相册，图库列表不受影响。
+    final inSystem =
+        await photos.searchPhotos(PhotoFilter(categoryIds: {systemId}));
+    expect(inSystem.map((p) => p.id), contains(photo.id));
+  });
+
+  test('v11 升级到 v12 保留相册并添加虚拟相册列', () async {
+    await AppDatabase.close();
+    final legacy = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    await legacy.execute('''CREATE TABLE themes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+      description TEXT, cover_photo_id INTEGER, cover_image_path TEXT,
+      created_at INTEGER NOT NULL, is_system INTEGER NOT NULL DEFAULT 0,
+      parent_id INTEGER, color_value INTEGER NOT NULL DEFAULT 0,
+      icon_key TEXT NOT NULL DEFAULT 'album',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_private INTEGER NOT NULL DEFAULT 0)''');
+    await legacy.execute('''CREATE TABLE photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, theme_id INTEGER NOT NULL,
+      local_path TEXT NOT NULL, original_name TEXT, taken_at INTEGER,
+      imported_at INTEGER NOT NULL, content_hash TEXT)''');
+    await legacy.insert('themes', {
+      'id': 1,
+      'name': '老相册',
+      'created_at': 88,
+      'is_system': 0,
+      'color_value': 0,
+      'icon_key': 'album',
+    });
+    await legacy.insert('photos', {
+      'id': 1,
+      'theme_id': 1,
+      'local_path': 'keep.jpg',
+      'imported_at': 99,
+    });
+
+    await AppDatabase.upgradeSchemaForTesting(legacy, 11);
+    expect(await legacy.query('themes', where: 'id = 1'), hasLength(1));
+    expect(await legacy.query('photos', where: 'id = 1'), hasLength(1));
+    final columns = await legacy.rawQuery('PRAGMA table_info(themes)');
+    expect(columns.any((column) => column['name'] == 'is_virtual'), isTrue);
+    expect(
+        columns.any((column) => column['name'] == 'virtual_rules'), isTrue);
+    expect(
+      (await legacy.query('themes', where: 'id = 1')).single['is_virtual'],
+      0,
+    );
+    db = legacy;
+  });
+
+  test('虚拟相册创建、规则存取与更新', () async {
+    final rules = VirtualAlbumRules(tagIds: {7}, favorite: true);
+    final album = await themes.createTheme('智能旅行',
+        isVirtual: true, virtualRules: rules.encode());
+    expect(album.isVirtual, isTrue);
+
+    final restored = (await themes.getThemeById(album.id!))!;
+    expect(restored.isVirtual, isTrue);
+    expect(VirtualAlbumRules.decode(restored.virtualRules).tagIds, {7});
+    expect(VirtualAlbumRules.decode(restored.virtualRules).favorite, isTrue);
+
+    final updated = VirtualAlbumRules(
+      tagIds: {8},
+      startDate: DateTime(2025, 1, 1),
+    );
+    expect(await themes.updateVirtualRules(album.id!, updated.encode()), isTrue);
+    final afterUpdate = (await themes.getThemeById(album.id!))!;
+    final decoded = VirtualAlbumRules.decode(afterUpdate.virtualRules);
+    expect(decoded.tagIds, {8});
+    expect(decoded.startDate, DateTime(2025, 1, 1));
+
+    // 普通相册不允许更新规则
+    final ordinary = await themes.createTheme('普通相册');
+    expect(
+      await themes.updateVirtualRules(ordinary.id!, updated.encode()),
+      isFalse,
+    );
+  });
+
+  test('虚拟相册规则查询端到端：只命中匹配照片', () async {
+    final travel = await tags.createTag('旅行', 0xFF00897B);
+    final food = await tags.createTag('美食', 0xFFE53935);
+
+    // matched：旅行标签 + 收藏 + 时间在 2020 年内 → 命中
+    // wrongTag：只有美食标签（标签不匹配）
+    // wrongTime：旅行标签 + 收藏，但拍摄时间在 2020 年之外
+    // notFavorite：旅行标签 + 时间在 2020 年内，但不收藏
+    // （_addPhoto 只写 imported_at，COALESCE(taken_at, imported_at) 取它）
+    final inRange = DateTime(2020, 6, 15).millisecondsSinceEpoch ~/ 1000;
+    final outOfRange = DateTime(2023, 6, 15).millisecondsSinceEpoch ~/ 1000;
+    final matched = await _addPhoto(photos, systemId, 'match.jpg', inRange);
+    final wrongTag =
+        await _addPhoto(photos, systemId, 'wrong-tag.jpg', inRange);
+    final wrongTime =
+        await _addPhoto(photos, systemId, 'wrong-time.jpg', outOfRange);
+    final notFavorite =
+        await _addPhoto(photos, systemId, 'no-fav.jpg', inRange);
+
+    await photos.addTags([matched.id!, wrongTime.id!], [travel.id!]);
+    await photos.addTags([wrongTag.id!], [food.id!]);
+    await photos.setFavorite([matched.id!, wrongTime.id!], true);
+
+    final rules = VirtualAlbumRules(
+      tagIds: {travel.id!},
+      startDate: DateTime(2020, 1, 1),
+      endDate: DateTime(2020, 12, 31),
+      favorite: true,
+    );
+    final filter = rules.toPhotoFilter();
+    final result = await photos.searchPhotos(filter);
+    expect(result.map((photo) => photo.id), [matched.id]);
+    expect(result.map((photo) => photo.id), isNot(contains(wrongTag.id)));
+    expect(result.map((photo) => photo.id), isNot(contains(wrongTime.id)));
+    expect(result.map((photo) => photo.id), isNot(contains(notFavorite.id)));
+    expect(await photos.countPhotos(filter), 1);
   });
 }
 

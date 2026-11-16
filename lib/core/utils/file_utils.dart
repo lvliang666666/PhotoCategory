@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 class FileUtils {
@@ -15,6 +16,21 @@ class FileUtils {
     final bytes = List<int>.generate(8, (_) => random.nextInt(256));
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join('');
     return '$hex$ext';
+  }
+
+  /// Compute the SHA-256 hash of a file's bytes, streaming the read so large
+  /// photos never fully load into memory. Returns null when the file is
+  /// missing or unreadable — callers treat that as "no dedup possible".
+  static Future<String?> computeFileHash(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return null;
+      final digest =
+          await sha256.bind(file.openRead()).firstWhere((_) => true, orElse: () => sha256.convert(const []));
+      return digest.toString();
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Ensure the given directory exists, creating it if necessary.
