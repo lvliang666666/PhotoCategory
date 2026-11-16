@@ -305,7 +305,7 @@ class SettingsPage extends StatelessWidget {
                   leading: const Icon(Icons.info_outline),
                   title: const Text('版本'),
                   trailing: Text(
-                    '1.0.0',
+                    '1.1.0',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: colorScheme.onSurface.withOpacity(0.5),
                         ),

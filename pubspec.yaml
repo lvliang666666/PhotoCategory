@@ -1,7 +1,7 @@
 name: photo_storer
 description: 相机分类 App - 本地照片分类管理
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: ^3.2.0
