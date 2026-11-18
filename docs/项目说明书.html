@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>相册分类 photo_storer 项目说明书（Flutter 相册整理 App）</title>
+<style>
+  :root { --ink:#1c2333; --sub:#5a6478; --line:#e3e7ef; --bg:#f7f8fb; --card:#ffffff; --acc:#7c3aed; --ok:#1a7f4e; --warn:#b3541e; }
+  * { box-sizing:border-box; }
+  body { font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; color:var(--ink); background:var(--bg); margin:0; line-height:1.75; }
+  .wrap { max-width:960px; margin:0 auto; padding:32px 24px 80px; }
+  header.hero { background:linear-gradient(135deg,#4c1d95,#8b5cf6); color:#fff; border-radius:14px; padding:36px 36px 28px; margin-bottom:28px; }
+  header.hero h1 { margin:0 0 8px; font-size:26px; }
+  header.hero p { margin:4px 0; opacity:.92; font-size:14px; }
+  .badge { display:inline-block; background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35); border-radius:999px; padding:2px 12px; font-size:12px; margin-right:8px; }
+  nav.toc { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 24px; margin-bottom:28px; }
+  nav.toc h2 { margin:0 0 10px; font-size:15px; color:var(--sub); }
+  nav.toc ol { margin:0; padding-left:22px; }
+  nav.toc li { margin:3px 0; font-size:14px; }
+  nav.toc a { color:var(--acc); text-decoration:none; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:26px 30px; margin-bottom:24px; }
+  section > h2 { margin:0 0 14px; font-size:20px; border-left:4px solid var(--acc); padding-left:12px; }
+  h3 { font-size:16px; margin:22px 0 8px; }
+  h4 { font-size:14px; margin:16px 0 6px; color:var(--sub); }
+  p, li { font-size:14px; }
+  table { width:100%; border-collapse:collapse; margin:10px 0 16px; font-size:13.5px; }
+  th, td { border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top; }
+  th { background:#f1ebfd; font-weight:600; white-space:nowrap; }
+  tr:nth-child(even) td { background:#fbf9ff; }
+  code { font-family:Consolas,monospace; background:#eef1f7; border-radius:4px; padding:1px 6px; font-size:13px; color:#c7254e; }
+  pre { background:#0f1726; color:#dce4f2; border-radius:8px; padding:14px 18px; overflow-x:auto; font-size:13px; line-height:1.6; }
+  .tip { border-left:4px solid var(--ok); background:#f0f9f4; border-radius:0 8px 8px 0; padding:10px 16px; margin:12px 0; font-size:13.5px; }
+  .warn { border-left:4px solid var(--warn); background:#fdf5ef; border-radius:0 8px 8px 0; padding:10px 16px; margin:12px 0; font-size:13.5px; }
+  .steps { counter-reset:step; padding-left:0; list-style:none; }
+  .steps > li { counter-increment:step; position:relative; padding:10px 0 10px 46px; border-bottom:1px dashed var(--line); }
+  .steps > li:last-child { border-bottom:none; }
+  .steps > li::before { content:counter(step); position:absolute; left:0; top:10px; width:30px; height:30px; border-radius:50%; background:var(--acc); color:#fff; text-align:center; line-height:30px; font-weight:700; font-size:14px; }
+  footer { text-align:center; color:var(--sub); font-size:12.5px; margin-top:30px; }
+  @media print { body{background:#fff;} section{border:none; padding:10px 0;} header.hero{border-radius:0;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="hero">
+  <h1>相册分类 photo_storer 项目说明书</h1>
+  <p><span class="badge">v1.1.0+2</span><span class="badge">Flutter / Dart ^3.2</span><span class="badge">Android</span><span class="badge">Provider + sqflite</span></p>
+  <p>本地优先的 Android 相册整理应用：不扫描系统图库，用户主动选照片建相册、打标签、写故事，隐私安全（应用锁 + 私密相册 + Keystore）。</p>
+</header>
+<nav class="toc"><h2>目录</h2><ol>
+  <li><a href="#s1">项目是什么</a></li>
+  <li><a href="#s2">怎么跑起来</a></li>
+  <li><a href="#s3">怎么用</a></li>
+  <li><a href="#s4">数据在哪（备份）</a></li>
+  <li><a href="#s5">FAQ</a></li>
+  <li><a href="#s6">风险与备注</a></li>
+</ol></nav>
+
+<section id="s1"><h2>1. 项目是什么</h2>
+<p>「相册分类」（包名 <code>photo_storer</code>）是面向 Android 的本地照片整理应用。设计哲学是<strong>温和的低饱和配色 + 黏土卡片式界面</strong>，核心原则「本地优先、隐私保护」——应用绝不扫描或自动导入系统图库，只有用户主动选择的照片才进入应用。</p>
+<h3>核心功能</h3>
+<ul>
+  <li><strong>层级化整理</strong>：相册 → 一级子相册，支持相册描述、彩色主题、图标、自定义封面；照片可关联多个分类。</li>
+  <li><strong>图库与时间线</strong>：全部照片 / 收藏 / 最近浏览 / 最近添加智能入口；按文件名、分类、标签、格式、方向、收藏、拍摄日期筛选；按年月组织时间线。</li>
+  <li><strong>导入导出</strong>：从系统照片选择器批量导入（读 EXIF 拍摄时间）；单相册 ZIP 打包分享；「完整相册包」导出 / 恢复（含照片、层级、标签、收藏、浏览记录、私密凭据，恢复前校验格式与引用）。</li>
+  <li><strong>隐私安全</strong>：六位数字应用锁（后台重锁、错误限制、短暂锁定）；私密相册独立密码 + 隐藏入口；密码加盐哈希存储；AI API Key 走 Android Keystore 加密。</li>
+  <li><strong>AI 朋友圈文案</strong>：可配置 DeepSeek API，四种风格生成最多三条文案；AI 只收元数据（文件名 / 时间 / 尺寸 / 故事 / 描述），<strong>不上传照片原图</strong>。</li>
+</ul>
+<h3>技术栈</h3>
+<table>
+  <tr><th>类型</th><th>选型</th></tr>
+  <tr><td>框架</td><td>Flutter（Dart ^3.2.0），Provider 状态管理</td></tr>
+  <tr><td>数据库</td><td>sqflite / SQLite（<code>photo_storer.db</code>）+ shared_preferences</td></tr>
+  <tr><td>媒体</td><td>image_picker / photo_manager / gal / exif；share_plus 分享</td></tr>
+  <tr><td>原生通道</td><td>Platform Channel：安全存储、图片格式兼容、ZIP 打包、备份文件选择</td></tr>
+</table>
+</section>
+
+<section id="s2"><h2>2. 怎么跑起来</h2>
+<h3>环境要求</h3>
+<ul>
+  <li>Flutter SDK（Dart ^3.2.0）、Android SDK、Java/Kotlin 17；Gradle wrapper 已升到 8.14</li>
+</ul>
+<h3>构建步骤</h3>
+<ol class="steps">
+  <li>拉依赖：<pre>flutter pub get</pre></li>
+  <li>日常运行（项目定义 standard / zero 两个 flavor）：<pre>flutter run --flavor standard</pre></li>
+  <li>跑测试：<pre>flutter test</pre></li>
+  <li>一键部署到连接的手机（项目自带脚本）：<pre>deploy.bat            # 或 scripts\deploy.ps1
+connect-phone.bat     # 先连接手机</pre></li>
+  <li>发版构建：<pre>flutter build apk --release --flavor standard</pre></li>
+</ol>
+<div class="tip">发版产物归档在 <code>releases/</code>（67M，已被 .gitignore 排除不进 git）。</div>
+</section>
+
+<section id="s3"><h2>3. 怎么用</h2>
+<ol class="steps">
+  <li><strong>首次启动</strong>：应用明确提示「不会扫描系统图库」——点导入从系统照片选择器批量选照片，EXIF 拍摄时间自动读取。</li>
+  <li><strong>建相册</strong>：相册总览页新建，设置颜色 / 图标 / 描述 / 封面；相册内可再建一级子相册。</li>
+  <li><strong>整理</strong>：图库页批量添加 / 移除分类和标签、批量收藏；时间线按年月回看。</li>
+  <li><strong>隐私</strong>：设置页开六位应用锁；私密相册单独设密码，可隐藏入口。</li>
+  <li><strong>AI 文案</strong>：选照片 → 填场景说明 → 选风格（自然日常 / 文艺克制 / 轻松幽默 / 电影旁白）→ 生成三条可编辑文案；API Key 在设置页配置（DeepSeek）。</li>
+  <li><strong>备份</strong>：设置页导出「完整相册包」，换机用恢复功能导入（校验格式与数据引用）。</li>
+</ol>
+</section>
+
+<section id="s4"><h2>4. 数据在哪（备份）</h2>
+<table>
+  <tr><th>数据</th><th>位置</th></tr>
+  <tr><td>数据库</td><td><code>photo_storer.db</code>（App 私有目录 databases/，照片记录 / 相册 / 标签 / 浏览记录）</td></tr>
+  <tr><td>照片副本</td><td>App 本地文件目录（导入时复制的副本，原图仍在系统相册不动）</td></tr>
+  <tr><td>偏好</td><td>shared_preferences</td></tr>
+  <tr><td>密钥</td><td>AI API Key 走 Android Keystore 加密（数据库只存空串）；应用锁 / 私密相册密码加盐哈希存库</td></tr>
+  <tr><td>备份出口</td><td>App 内「完整相册包」导出（含凭据），恢复前自动校验</td></tr>
+</table>
+<div class="tip">换机 / 备份首选 App 内「完整相册包」功能——照片、层级、标签、收藏、浏览记录、私密相册凭据全包含，比手工拷 db 文件可靠。</div>
+</section>
+
+<section id="s5"><h2>5. FAQ</h2>
+<h4>Q：为什么 App 里看不到我手机里的全部照片？</h4>
+<p>设计如此——本地优先 + 隐私保护，不扫描系统图库。要用哪张照片就从选择器主动导入哪张。</p>
+<h4>Q：AI 文案会泄露照片吗？</h4>
+<p>不会。AI 只接收文件名、拍摄时间、尺寸、照片故事、相册描述和补充说明这些元数据，原图永不上传。</p>
+<h4>Q：应用锁密码忘了？</h4>
+<p>应用锁与私密相册密码是加盐哈希存储，无法找回；完整相册包恢复会带凭据，但前提是你有之前的备份。</p>
+<h4>Q：standard 和 zero 两个 flavor 有什么区别？</h4>
+<p>项目定义的两个产品 flavor，日常开发用 <code>standard</code>；具体差异见 android/build.gradle 配置。</p>
+<h4>Q：构建报 Gradle 版本错误？</h4>
+<p>wrapper 已升到 8.14（Flutter 最低版本要求），确认本地 Gradle 未被覆盖。</p>
+</section>
+
+<section id="s6"><h2>6. 风险与备注</h2>
+<table>
+  <tr><th>项</th><th>状态</th></tr>
+  <tr><td>git 远程</td><td><code>origin → https://github.com/lvliang666666/PhotoCategory.git</code></td></tr>
+  <tr><td>工作区</td><td>干净（0 未提交）</td></tr>
+  <tr><td>仓库体积</td><td>3.0G，其中 <code>build/</code> 占 2.0G（构建中间产物，可删可再生）</td></tr>
+  <tr><td>测试</td><td>test/ 含数据层、应用锁、主题卡片和 Widget 测试</td></tr>
+</table>
+<ul>
+  <li><strong>磁盘大头</strong>：<code>build/</code> 2.0G 是 Flutter 构建缓存，<code>flutter clean</code> 即可释放（下次构建重新生成）——这是本目录最大的可清理项。</li>
+  <li><strong>releases 不进 git</strong>：67M APK 产物已被 .gitignore 排除，仅本地留存，删了需重新构建。</li>
+  <li><strong>协作规范</strong>：根目录 <code>AGENTS.md</code> 是 agent 协作纪律文档；发版产物命名与归档遵循 releases/ 现状。</li>
+</ul>
+</section>
+
+<footer>相册分类 photo_storer 项目说明书 · 2026-11-18 由 S000252（百万大撤离）整理</footer>
+</div>
+</body>
+</html>
